@@ -1,8 +1,10 @@
 #= require trix/observers/mutation_observer
 #= require trix/operations/file_verification_operation
+#= require trix/controllers/input/composition_input
 
 {handleEvent, findClosestElementFromNode, findElementFromContainerAndOffset,
-  defer, makeElement, innerElementIsActive, summarizeStringChange, objectsAreEqual} = Trix
+  defer, makeElement, innerElementIsActive, summarizeStringChange, objectsAreEqual,
+  tagName} = Trix
 
 class Trix.InputController extends Trix.BasicObject
   pastedFileCount = 0
@@ -43,6 +45,10 @@ class Trix.InputController extends Trix.BasicObject
   resetInputSummary: ->
     @inputSummary = {}
 
+  reset: ->
+    @resetInputSummary()
+    Trix.selectionChangeObserver.reset()
+
   # Render cycle
 
   editorWillSyncDocumentView: ->
@@ -54,27 +60,57 @@ class Trix.InputController extends Trix.BasicObject
   requestRender: ->
     @delegate?.inputControllerDidRequestRender?()
 
+  requestReparse: ->
+    @delegate?.inputControllerDidRequestReparse?()
+    @requestRender()
+
   # Mutation observer delegate
 
   elementDidMutate: (mutationSummary) ->
     @mutationCount++
-    unless @inputSummary.composing
+    unless @isComposing()
       @handleInput ->
-        unless @mutationIsExpected(mutationSummary)
-          @responder?.replaceHTML(@element.innerHTML)
+        if @mutationIsSignificant(mutationSummary)
+          if @mutationIsExpected(mutationSummary)
+            @requestRender()
+          else
+            @requestReparse()
+        @reset()
 
-        @resetInputSummary()
-        @requestRender()
-        Trix.selectionChangeObserver.reset()
+  mutationIsExpected: ({textAdded, textDeleted}) ->
+    return true if @inputSummary.preferDocument
 
-  mutationIsExpected: (mutationSummary) ->
-    if @inputSummary
-      if @inputSummary.preferDocument?
-        @inputSummary.preferDocument
+    mutationAdditionMatchesSummary =
+      if textAdded?
+        textAdded is @inputSummary.textAdded
       else
-        unhandledAddition = mutationSummary.textAdded isnt @inputSummary.textAdded
-        unhandledDeletion = mutationSummary.textDeleted? and not @inputSummary.didDelete
-        not (unhandledAddition or unhandledDeletion)
+        not @inputSummary.textAdded
+    mutationDeletionMatchesSummary =
+      if textDeleted?
+        @inputSummary.didDelete
+      else
+        not @inputSummary.didDelete
+
+    unexpectedNewlineAddition =
+      textAdded is "\n" and not mutationAdditionMatchesSummary
+    unexpectedNewlineDeletion =
+      textDeleted is "\n" and not mutationDeletionMatchesSummary
+    singleUnexpectedNewline =
+      (unexpectedNewlineAddition and not unexpectedNewlineDeletion) or
+      (unexpectedNewlineDeletion and not unexpectedNewlineAddition)
+
+    if singleUnexpectedNewline
+      if range = @getSelectedRange()
+        offset = if unexpectedNewlineAddition then -1 else 1
+        if @responder?.positionIsBlockBreak(range[1] + offset)
+          return true
+
+    mutationAdditionMatchesSummary and mutationDeletionMatchesSummary
+
+  mutationIsSignificant: (mutationSummary) ->
+    textChanged = Object.keys(mutationSummary).length > 0
+    composedEmptyString = @compositionInput?.getEndData() is ""
+    textChanged or not composedEmptyString
 
   unlessMutationOccurs: (callback) ->
     mutationCount = @mutationCount
@@ -96,7 +132,7 @@ class Trix.InputController extends Trix.BasicObject
 
   events:
     keydown: (event) ->
-      @resetInputSummary() unless @inputSummary.composing
+      @resetInputSummary() unless @isComposing()
 
       if keyName = @constructor.keyNames[event.keyCode]
         context = @keys
@@ -133,13 +169,24 @@ class Trix.InputController extends Trix.BasicObject
         @responder?.insertString(character)
         @setInputSummary(textAdded: character, didDelete: @selectionIsExpanded())
 
+    textInput: (event) ->
+      # Handle autocapitalization
+      {data} = event
+      {textAdded} = @inputSummary
+      if textAdded and textAdded isnt data and textAdded.toUpperCase() is data
+        range = @getSelectedRange()
+        @setSelectedRange([range[0], range[1] + textAdded.length])
+        @responder?.insertString(data)
+        @setInputSummary(textAdded: data)
+        @setSelectedRange(range)
+
     dragenter: (event) ->
       event.preventDefault()
 
     dragstart: (event) ->
       target = event.target
       @serializeSelectionToDataTransfer(event.dataTransfer)
-      @draggedRange = @responder?.getSelectedRange()
+      @draggedRange = @getSelectedRange()
       @delegate?.inputControllerDidStartDrag?()
 
     dragover: (event) ->
@@ -204,18 +251,27 @@ class Trix.InputController extends Trix.BasicObject
           @delegate?.inputControllerDidPaste(pasteData)
         return
 
-      if html = paste.getData("text/html")
+      if dataTransferIsPlainText(paste)
+        string = paste.getData("text/plain")
+        pasteData.string = string
+        @setInputSummary(textAdded: string, didDelete: @selectionIsExpanded())
+        @delegate?.inputControllerWillPasteText(pasteData)
+        @responder?.insertString(string)
+        @requestRender()
+        @delegate?.inputControllerDidPaste(pasteData)
+
+      else if html = paste.getData("text/html")
         pasteData.html = html
         @delegate?.inputControllerWillPasteText(pasteData)
         @responder?.insertHTML(html)
         @requestRender()
         @delegate?.inputControllerDidPaste(pasteData)
 
-      else if string = paste.getData("text/plain")
-        pasteData.string = string
-        @setInputSummary(textAdded: string, didDelete: @selectionIsExpanded())
+      else if href = paste.getData("URL")
+        pasteData.string = href
+        @setInputSummary(textAdded: href, didDelete: @selectionIsExpanded())
         @delegate?.inputControllerWillPasteText(pasteData)
-        @responder?.insertString(string)
+        @responder?.insertText(Trix.Text.textForStringWithAttributes(href, {href}))
         @requestRender()
         @delegate?.inputControllerDidPaste(pasteData)
 
@@ -232,45 +288,13 @@ class Trix.InputController extends Trix.BasicObject
       event.preventDefault()
 
     compositionstart: (event) ->
-      if @inputSummary.eventName is "keypress" and @inputSummary.textAdded
-        @responder?.deleteInDirection("left")
-
-      unless @selectionIsExpanded()
-        @responder?.insertPlaceholder()
-        @requestRender()
-
-      compositionRange = @responder?.getSelectedRange()
-      @setInputSummary({compositionRange, compositionStart: event.data, composing: true})
+      @getCompositionInput().start(event.data)
 
     compositionupdate: (event) ->
-      if compositionRange = @responder?.selectPlaceholder()
-        @setInputSummary({compositionRange})
-        @responder?.forgetPlaceholder()
-
-      @setInputSummary(compositionUpdate: event.data)
+      @getCompositionInput().update(event.data)
 
     compositionend: (event) ->
-      compositionEnd = event.data
-      {compositionStart, compositionUpdate, compositionRange} = @inputSummary
-
-      @responder?.forgetPlaceholder()
-      @setInputSummary(composing: false)
-
-      if compositionStart? and compositionRange?
-        @delegate?.inputControllerWillPerformTyping()
-        @responder?.setSelectedRange(compositionRange)
-        @responder?.insertString(compositionEnd)
-        @setInputSummary(preferDocument: true)
-
-        # Fix for compositions remaining selected in Firefox:
-        # If the last composition update is the same as the final composition then
-        # it's likely there won't be another mutation (and subsequent render + selection change).
-        # In that case, collapse the selection and request a render.
-        if compositionEnd is compositionUpdate
-          @unlessMutationOccurs =>
-            if @selectionIsExpanded()
-              @responder?.setSelection(compositionRange[1])
-              @requestRender()
+      @getCompositionInput().end(event.data)
 
     input: (event) ->
       event.stopPropagation()
@@ -290,8 +314,8 @@ class Trix.InputController extends Trix.BasicObject
       @responder?.insertLineBreak()
 
     tab: (event) ->
-      if @responder?.canIncreaseBlockAttributeLevel()
-        @responder?.increaseBlockAttributeLevel()
+      if @responder?.canIncreaseNestingLevel()
+        @responder?.increaseNestingLevel()
         @requestRender()
         event.preventDefault()
 
@@ -326,8 +350,8 @@ class Trix.InputController extends Trix.BasicObject
         @responder?.insertString("\n")
 
       tab: (event) ->
-        if @responder?.canDecreaseBlockAttributeLevel()
-          @responder?.decreaseBlockAttributeLevel()
+        if @responder?.canDecreaseNestingLevel()
+          @responder?.decreaseNestingLevel()
           @requestRender()
           event.preventDefault()
 
@@ -360,6 +384,15 @@ class Trix.InputController extends Trix.BasicObject
     finally
       @delegate?.inputControllerDidHandleInput()
 
+  getCompositionInput: ->
+    if @isComposing()
+      @compositionInput
+    else
+      @compositionInput = new Trix.CompositionInput this
+
+  isComposing: ->
+    @compositionInput? and not @compositionInput.isEnded()
+
   deleteInDirection: (direction, event) ->
     if @responder?.deleteInDirection(direction) is false
       if event
@@ -383,7 +416,7 @@ class Trix.InputController extends Trix.BasicObject
     types["Files"] or types["application/x-trix-document"] or types["text/html"] or types["text/plain"]
 
   getPastedHTMLUsingHiddenElement: (callback) ->
-    selectedRange = @responder?.getSelectedRange()
+    selectedRange = @getSelectedRange()
 
     style =
       position: "absolute"
@@ -398,9 +431,11 @@ class Trix.InputController extends Trix.BasicObject
     requestAnimationFrame =>
       html = element.innerHTML
       document.body.removeChild(element)
-      @responder?.setSelectedRange(selectedRange)
+      @setSelectedRange(selectedRange)
       callback(html)
 
+  @proxyMethod "responder?.getSelectedRange"
+  @proxyMethod "responder?.setSelectedRange"
   @proxyMethod "responder?.expandSelectionInDirection"
   @proxyMethod "responder?.selectionIsInCursorTarget"
   @proxyMethod "responder?.selectionIsExpanded"
@@ -420,6 +455,18 @@ keyEventIsKeyboardCommand = (event) ->
 pasteEventIsCrippledSafariHTMLPaste = (event) ->
   if types = event.clipboardData?.types
     "text/html" not in types and ("com.apple.webarchive" in types or "com.apple.flat-rtfd" in types)
+
+dataTransferIsPlainText = (dataTransfer) ->
+  text = dataTransfer.getData("text/plain")
+  html = dataTransfer.getData("text/html")
+
+  if text and html
+    element = makeElement("div")
+    element.innerHTML = html
+    if element.textContent is text
+      not element.querySelector(":not(meta)")
+  else
+    text?.length
 
 testTransferData = "application/x-trix-feature-detection": "test"
 

@@ -39,8 +39,28 @@ testGroup "Trix.HTMLParser", ->
     assert.documentHTMLEqual Trix.HTMLParser.parse(html).getDocument(), expectedHTML
 
   test "ignores whitespace between block elements", ->
-    html = """<div>a</div> \n <div>b</div>"""
-    expectedHTML = """<div><!--block-->a</div><div><!--block-->b</div>"""
+    html = """<div>a</div> \n <div>b</div>     <article>c</article>  \n\n <section>d</section> """
+    expectedHTML = """<div><!--block-->a</div><div><!--block-->b</div><div><!--block-->c</div><div><!--block-->d</div>"""
+    assert.documentHTMLEqual Trix.HTMLParser.parse(html).getDocument(), expectedHTML
+
+  test "ingores whitespace between nested block elements", ->
+    html = """<ul> <li>a</li> \n  <li>b</li>  </ul><div>  <div> \n <blockquote>c</blockquote>\n </div>  \n</div>"""
+    expectedHTML = """<ul><li><!--block-->a</li><li><!--block-->b</li></ul><blockquote><!--block-->c</blockquote>"""
+    assert.documentHTMLEqual Trix.HTMLParser.parse(html).getDocument(), expectedHTML
+
+  test "ignores inline whitespace that can't be displayed", ->
+    html = """ a  \n b    <span>c\n</span><span>d  \ne </span> f <span style="white-space: pre">  g\n\n h  </span>"""
+    expectedHTML = """<div><!--block-->a b c d e f &nbsp; g<br><br>&nbsp;h &nbsp;</div>"""
+    assert.documentHTMLEqual Trix.HTMLParser.parse(html).getDocument(), expectedHTML
+
+  test "parses block elements with leading breakable whitespace", ->
+    html = """<blockquote> <span>a</span> <blockquote>\n <strong>b</strong> <pre> <span>c</span></pre></blockquote></blockquote>"""
+    expectedHTML = """<blockquote><!--block-->a<blockquote><!--block--><strong>b</strong><pre><!--block--> c</pre></blockquote></blockquote>"""
+    assert.documentHTMLEqual Trix.HTMLParser.parse(html).getDocument(), expectedHTML
+
+  test "parses block elements with leading non-breaking whitespace", ->
+    html = """<blockquote>&nbsp;<span>a</span></blockquote>"""
+    expectedHTML = """<blockquote><!--block-->&nbsp;a</blockquote>"""
     assert.documentHTMLEqual Trix.HTMLParser.parse(html).getDocument(), expectedHTML
 
   test "converts newlines to spaces", ->
@@ -58,6 +78,23 @@ testGroup "Trix.HTMLParser", ->
     expectedHTML = """<blockquote><!--block-->abc</blockquote><div><!--block--><strong>123</strong></div>"""
     assert.documentHTMLEqual Trix.HTMLParser.parse(html).getDocument(), expectedHTML
 
+  test "parses whitespace-only text nodes without a containing block element", ->
+    html = """a <strong>b</strong> <em>c</em>"""
+    expectedHTML = """<div><!--block-->a <strong>b</strong> <em>c</em></div>"""
+    assert.documentHTMLEqual Trix.HTMLParser.parse(html).getDocument(), expectedHTML
+
+  test "parses spaces around cursor targets", ->
+    cursorTarget = Trix.selectionElements.create("cursorTarget").outerHTML
+    html = """<div>a #{cursorTarget}<span>b</span>#{cursorTarget} c</div>"""
+    expectedHTML = """<div><!--block-->a b c</div>"""
+    assert.documentHTMLEqual Trix.HTMLParser.parse(html).getDocument(), expectedHTML
+
+  test "parses spanned text elements that don't have a parser function", ->
+    assert.notOk Trix.config.textAttributes.strike.parser
+    html = """<del>a <strong>b</strong></del>"""
+    expectedHTML = """<div><!--block--><del>a </del><strong><del>b</del></strong></div>"""
+    assert.documentHTMLEqual Trix.HTMLParser.parse(html).getDocument(), expectedHTML
+
   test "translates tables into plain text", ->
     html = """<table><tr><td>a</td><td>b</td></tr><tr><td>1</td><td><p>2</p></td></tr><table>"""
     expectedHTML = """<div><!--block-->a | b<br>1 | 2</div>"""
@@ -68,6 +105,11 @@ testGroup "Trix.HTMLParser", ->
     expectedHTML = """<div><!--block-->a<br><br></div><div><!--block-->b</div><div><!--block--><br>c</div>"""
     document = Trix.HTMLParser.parse(html).getDocument()
     assert.documentHTMLEqual document, expectedHTML
+
+  test "ignores text nodes in script elements", ->
+    html = """<div>a<script>alert("b")</script></div>"""
+    expectedHTML = """<div><!--block-->a</div>"""
+    assert.documentHTMLEqual Trix.HTMLParser.parse(html).getDocument(), expectedHTML
 
   test "sanitizes unsafe html", (done) ->
     window.unsanitized = []
@@ -82,6 +124,18 @@ testGroup "Trix.HTMLParser", ->
       assert.deepEqual window.unsanitized, []
       delete window.unsanitized
       done()
+
+  test "parses attachment caption from large html string", (done) ->
+    html = fixtures["image attachment with edited caption"].html
+
+    for i in [1..30]
+      html += fixtures["image attachment"].html
+
+    for n in [1..3]
+      attachmentPiece = Trix.HTMLParser.parse(html).getDocument().getAttachmentPieces()[0]
+      assert.equal attachmentPiece.getCaption(), "Example"
+
+    done()
 
 getOrigin = ->
   {protocol, hostname, port} = window.location

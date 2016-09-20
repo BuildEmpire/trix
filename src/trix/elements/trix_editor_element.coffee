@@ -62,6 +62,11 @@ Trix.registerElement "trix-editor", do ->
       max-height: 0px;
     }
 
+    %t #{attachmentSelector}[data-trix-mutable] figcaption:empty::before {
+      content: "#{Trix.config.lang.captionPrompt}";
+      color: graytext;
+    }
+
     %t #{selectionElements.selector} { #{selectionElements.cssText} }
   """
 
@@ -134,10 +139,10 @@ Trix.registerElement "trix-editor", do ->
 
   attachedCallback: ->
     unless @hasAttribute("data-trix-internal")
-      autofocus(this)
       @editorController ?= new Trix.EditorController(editorElement: this, html: @defaultValue = @value)
       @editorController.registerSelectionManager()
       @registerResetListener()
+      autofocus(this)
       requestAnimationFrame => @notify("initialize")
 
   detachedCallback: ->

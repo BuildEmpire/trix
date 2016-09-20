@@ -15,9 +15,7 @@ Trix sidesteps these inconsistencies by treating `contenteditable` as an I/O dev
 
 ### Built for the Modern Web
 
-Trix supports all evergreen, self-updating desktop and mobile browsers.
-
-![Browser Test Status](https://s3.amazonaws.com/trix-depot/test-status-images/trix-current.svg)
+<details><summary>Trix supports all evergreen, self-updating desktop and mobile browsers.</summary><img src="https://s3.amazonaws.com/trix-depot/test-status-images/trix.svg"></details>
 
 Trix is built with emerging web standards, notably [Custom Elements](http://www.w3.org/TR/custom-elements/), [Mutation Observer](https://dom.spec.whatwg.org/#mutation-observers), and [Promises](https://people.mozilla.org/~jorendorff/es6-draft.html#sec-promise-objects). Eventually we expect all browsers to implement these standards. In the meantime, Trix includes [polyfills](https://en.wikipedia.org/wiki/Polyfill) for missing functionality.
 
@@ -87,7 +85,7 @@ The default `trix.css` file includes styles for basic formatted content—includ
 
 Trix automatically accepts files dragged or pasted into an editor and inserts them as attachments in the document. Each attachment is considered _pending_ until you store it remotely and provide Trix with a permanent URL.
 
-To store attachments, listen for the `trix-attachment-add` event. Upload the attached files with XMLHttpRequest yourself and set the attachment’s URL attribute upon completion. See the [attachment example](http://trix-editor.org/js/attachments.js) for detailed information.
+To store attachments, listen for the `trix-attachment-add` event. Upload the attached files with XMLHttpRequest yourself and set the attachment’s URL attribute upon completion. See the [attachment example](https://trix-editor.org/js/attachments.js) for detailed information.
 
 If you don’t want to accept dropped or pasted files, call `preventDefault()` on the `trix-file-accept` event, which Trix dispatches just before the `trix-attachment-add` event.
 
@@ -246,7 +244,7 @@ element.editor.setSelectedRange([0, 4])
 element.editor.deleteInDirection("forward")
 ```
 
-## Working With Attributes and Indentation
+## Working With Attributes and Nesting
 
 Trix represents formatting as sets of _attributes_ applied across ranges of a document.
 
@@ -267,7 +265,7 @@ To set the `href` attribute, pass a URL as the second argument to `editor.activa
 ```js
 element.editor.insertString("Trix")
 element.editor.setSelectedRange([0, 4])
-element.editor.activateAttribute("href", "http://trix-editor.org/")
+element.editor.activateAttribute("href", "https://trix-editor.org/")
 ```
 
 ### Removing Formatting
@@ -288,14 +286,14 @@ element.editor.activateAttribute("italic")
 element.editor.insertString("This is italic")
 ```
 
-### Adjusting the Indentation Level
+### Adjusting the Nesting Level
 
-To adjust the indentation level of block-level attributes, call the `editor.increaseIndentationLevel` and `editor.decreaseIndentationLevel` methods.
+To adjust the nesting level of quotes, bulleted lists, or numbered lists, call the `editor.increaseNestingLevel` and `editor.decreaseNestingLevel` methods.
 
 ```js
 element.editor.activateAttribute("quote")
-element.editor.increaseIndentationLevel()
-element.editor.decreaseIndentationLevel()
+element.editor.increaseNestingLevel()
+element.editor.decreaseNestingLevel()
 ```
 
 ## Using Undo and Redo
@@ -356,13 +354,12 @@ Trix was created by [Javan Makhmali](https://twitter.com/javan) and [Sam Stephen
 
 ### Building From Source
 
-Trix is written in [CoffeeScript](https://github.com/jashkenas/coffee-script) and compiled to JavaScript with [Blade](https://github.com/javan/blade).
+Trix is written in [CoffeeScript](https://github.com/jashkenas/coffeescript) and compiled to JavaScript with [Blade](https://github.com/javan/blade).
 
-To build Trix from source, you will need a recent version of Ruby. From inside a checkout of the Trix Git repository, issue the following commands to build the distributable files in `dist/`:
+From inside a checkout of the Trix Git repository, issue the following commands to build the distributable files in `dist/`:
 
 ```
-$ gem install bundler
-$ bundle install
+$ bin/setup
 $ bin/blade build
 ```
 
@@ -370,12 +367,16 @@ $ bin/blade build
 
 You can spawn a development web server to work on Trix in a more convenient fashion. Instead of manually rebuilding the source each time, just reload a page in your browser to see your changes.
 
-To develop in-browser, run the `bin/rackup` command and visit the displayed URL.
+To develop in-browser, run `bin/setup` and follow the displayed instructions.
 
 ### Running Tests
 
 Make sure you’re set up to build from source using the instructions above. Then run `bin/blade runner` and visit the displayed URL to run the Trix test suite.
 
+### Pull Requests
+
+Only commit changes to Trix’s source (everything except the compiled files in `/dist`) and leave the [VERSION](src/trix/VERSION) unchanged. We update both when publishing new [releases](https://github.com/basecamp/trix/releases). :heart:
+
 ---
 
-© 2015 Basecamp, LLC.
+© 2016 Basecamp, LLC.
